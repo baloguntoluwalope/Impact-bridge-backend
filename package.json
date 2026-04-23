@@ -10,6 +10,9 @@
     "test": "jest --coverage --forceExit --detectOpenHandles",
     "seed:admin": "node src/scripts/seedAdmin.js"
   },
+  "engines": {
+  "node": "18.x"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
