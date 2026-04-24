@@ -2,111 +2,126 @@
 
 require('dotenv').config();
 
+const mongoose = require('mongoose');
+
 const connectDB = require('./config/db');
 const { connectRedis, getRedisClient } = require('./config/redis');
 const { initFirebase } = require('./config/firebase');
 const { startReconciliationCron } = require('./jobs/cron/reconciliation.cron');
 const logger = require('./utils/logger');
-const mongoose = require('mongoose');
 
-const PORT = parseInt(process.env.PORT) || 5000;
+const PORT = process.env.PORT || 5000;
 
 /**
- * ─────────────────────────────────────────────
- *  STARTUP LOGGER HELPERS
- * ─────────────────────────────────────────────
+ * Simple logger (kept clean)
  */
 const log = {
-  info: (msg) => console.log(`🔵 [INFO] ${msg}`),
-  success: (msg) => console.log(`🟢 [SUCCESS] ${msg}`),
-  warn: (msg) => console.log(`🟡 [WARN] ${msg}`),
-  error: (msg) => console.log(`🔴 [ERROR] ${msg}`),
-  start: (msg) => console.log(`🚀 [START] ${msg}`),
+  info:    (msg) => console.log(`🔵 ${msg}`),
+  success: (msg) => console.log(`🟢 ${msg}`),
+  warn:    (msg) => console.log(`🟡 ${msg}`),
+  error:   (msg) => console.log(`🔴 ${msg}`),
 };
 
-const start = async () => {
+/**
+ * SAFE QUEUE LOADER
+ */
+const loadQueues = () => {
   try {
-    log.start('Impact Bridge server initializing...');
+    const { queues } = require('./config/bullmq');
 
-    // ─────────────────────────────────────────────
-    // 1. DATABASE CONNECTIONS
-    // ─────────────────────────────────────────────
-    log.start('Connecting to MongoDB...');
+    if (!queues || Object.keys(queues).length === 0) {
+      log.warn('No BullMQ queues found');
+      return null;
+    }
+
+    log.success('BullMQ queues loaded');
+    return queues;
+  } catch (err) {
+    log.warn(`Queues not initialized: ${err.message}`);
+    return null;
+  }
+};
+
+/**
+ * START SERVER
+ */
+const startServer = async () => {
+  try {
+    log.info('Starting Impact Bridge backend...');
+
+    /**
+     * 1. DATABASE
+     */
     await connectDB();
     log.success('MongoDB connected');
 
-    log.start('Connecting to Redis...');
+    /**
+     * 2. REDIS
+     */
     await connectRedis();
     log.success('Redis connected');
 
-    // ─────────────────────────────────────────────
-    // 2. FIREBASE INITIALIZATION
-    // ─────────────────────────────────────────────
+    /**
+     * 3. FIREBASE (optional)
+     */
     try {
-      log.start('Initializing Firebase...');
       initFirebase();
       log.success('Firebase initialized');
     } catch (err) {
-      log.warn(`Firebase disabled: ${err.message}`);
+      log.warn(`Firebase skipped: ${err.message}`);
     }
 
-    // ─────────────────────────────────────────────
-    // 3. LOAD EXPRESS APP
-    // ─────────────────────────────────────────────
+    /**
+     * 4. EXPRESS APP
+     */
     const app = require('./app');
 
-    // ─────────────────────────────────────────────
-    // 4. BULLMQ WORKERS
-    // ─────────────────────────────────────────────
+    /**
+     * 5. QUEUES (SAFE LOAD)
+     */
+    const queues = loadQueues();
+
+    /**
+     * 6. WORKERS (ONLY DEV)
+     */
     if (process.env.NODE_ENV !== 'production') {
-      log.start('Starting BullMQ workers (dev mode)...');
-      require('./jobs/worker');
-      log.success('BullMQ workers running');
+      try {
+        require('./jobs/worker');
+        log.success('Workers started (dev)');
+      } catch (err) {
+        log.warn(`Workers not started: ${err.message}`);
+      }
     }
 
-    // ─────────────────────────────────────────────
-    // 5. CRON JOBS
-    // ─────────────────────────────────────────────
-    log.start('Starting cron jobs...');
-    startReconciliationCron();
-    log.success('Cron jobs started');
+    /**
+     * 7. CRON JOBS (SAFE)
+     */
+    try {
+      startReconciliationCron();
+      log.success('Cron jobs started');
+    } catch (err) {
+      log.warn(`Cron failed: ${err.message}`);
+    }
 
-    // ─────────────────────────────────────────────
-    // 6. SDG CHECK
-    // ─────────────────────────────────────────────
-    // const SDG = require('./modules/sdg/sdg.model');
-
-    // log.start('Checking SDG data...');
-    // const sdgCount = await SDG.countDocuments();
-
-    // if (sdgCount === 0) {
-    //   log.warn('No SDGs found — run seed endpoint when needed');
-    // } else {
-    //   log.success(`SDGs loaded: ${sdgCount}`);
-    // }
-
-    // ─────────────────────────────────────────────
-    // 7. START SERVER
-    // ─────────────────────────────────────────────
+    /**
+     * 8. START LISTENING
+     */
     const server = app.listen(PORT, () => {
-      console.log('\n');
-      console.log('╔══════════════════════════════════════════════════╗');
-      console.log('║       🌍  IMPACT BRIDGE  —  RUNNING              ║');
-      console.log('╠══════════════════════════════════════════════════╣');
-      console.log(`║  🟢 Port:        ${PORT}`);
-      console.log(`║  🟢 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`║  🌐 API Base:    http://localhost:${PORT}/api/v1`);
-      console.log(`║  📘 Swagger UI:  http://localhost:${PORT}/api/docs`);
-      console.log(`║  📄 API Docs:    http://localhost:${PORT}/api/docs.json`);
-      console.log(`║  ❤️ Health:      http://localhost:${PORT}/health`);
-      console.log('╚══════════════════════════════════════════════════╝\n');
+      console.log('\n═══════════════════════════════════════');
+      console.log('🌍 IMPACT BRIDGE BACKEND RUNNING');
+      console.log('═══════════════════════════════════════');
+      console.log(`🚀 Port:        ${PORT}`);
+      console.log(`🌐 Base URL:    /api/v1`);
+      console.log(`❤️ Health:      /health`);
+      console.log(`📘 Docs:        /api/docs`);
+      console.log('═══════════════════════════════════════\n');
     });
 
-    // ─────────────────────────────────────────────
-    // 8. GRACEFUL SHUTDOWN
-    // ─────────────────────────────────────────────
+    /**
+     * 9. GRACEFUL SHUTDOWN
+     */
     const shutdown = async (signal) => {
-      log.warn(`${signal} received — shutting down gracefully...`);
+      log.warn(`${signal} received. Shutting down...`);
 
       server.close(async () => {
         try {
@@ -119,11 +134,14 @@ const start = async () => {
             log.success('Redis disconnected');
           }
 
-          const { queues } = require('./config/bullmq');
-          await Promise.allSettled(Object.values(queues).map((q) => q.close()));
-          log.success('BullMQ queues closed');
+          if (queues) {
+            await Promise.allSettled(
+              Object.values(queues).map((q) => q.close())
+            );
+            log.success('Queues closed');
+          }
 
-          log.success('Graceful shutdown complete');
+          log.success('Shutdown complete');
           process.exit(0);
         } catch (err) {
           log.error(`Shutdown error: ${err.message}`);
@@ -132,36 +150,33 @@ const start = async () => {
       });
 
       setTimeout(() => {
-        log.error('Forced shutdown after timeout');
+        log.error('Forced shutdown');
         process.exit(1);
-      }, 30000);
+      }, 10000);
     };
 
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
-    // ─────────────────────────────────────────────
-    // 9. GLOBAL ERROR HANDLERS
-    // ─────────────────────────────────────────────
-    process.on('unhandledRejection', (reason) => {
-      log.error(`Unhandled Promise Rejection: ${reason}`);
+    /**
+     * 10. GLOBAL ERRORS
+     */
+    process.on('unhandledRejection', (err) => {
+      log.error(`Unhandled Rejection: ${err}`);
     });
 
     process.on('uncaughtException', (err) => {
       log.error(`Uncaught Exception: ${err.message}`);
-      console.error(err.stack);
       process.exit(1);
     });
 
   } catch (err) {
-    log.error(`Server startup failed: ${err.message}`);
+    log.error(`Startup failed: ${err.message}`);
     process.exit(1);
   }
 };
 
-start();
-
-
+startServer();
 
 
 
