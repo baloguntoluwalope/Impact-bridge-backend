@@ -36,7 +36,9 @@ router.use(authenticate);
  *       403:
  *         $ref: '#/components/responses/Forbidden'
  */
-router.get('/all', authorize('super_admin'), ctrl.getAll);
+
+// router.get('/', authorize('super_admin'), ctrl.getAllWallets);
+
 
 /**
  * @swagger

@@ -1,50 +1,110 @@
 'use strict';
 
-const rateLimit  = require('express-rate-limit');
-const RedisStore = require('rate-limit-redis').default;
+const rateLimit = require('express-rate-limit');
+const RedisStore = require('rate-limit-redis');
 const { getRedisClient } = require('../config/redis');
 const ApiResponse = require('../utils/apiResponse');
 
 /**
- * Factory to create configured rate limiters with Redis backing.
- * Falls back to in-memory store if Redis is unavailable.
+ * Factory to create rate limiters
  */
 const makeLimiter = (windowMs, max, keyPrefix) => {
   const config = {
     windowMs,
-    limit: max, 
+    limit: max,
     standardHeaders: 'draft-7',
-    legacyHeaders:   false,
-    // Prevents the ERR_ERL_KEY_GEN_IPV6 warning/crash
-    validate: { xForwardedForHeader: false }, 
-    skip:            () => process.env.NODE_ENV === 'test',
-    handler:         (req, res) => ApiResponse.error(res, 'Too many requests. Please slow down and try again.', 429),
+    legacyHeaders: false,
+
+    validate: {
+      xForwardedForHeader: false,
+    },
+
+    skip: (req, res) => process.env.NODE_ENV === 'test',
+
+    handler: (req, res) =>
+      ApiResponse.error(
+        res,
+        'Too many requests. Please slow down and try again.',
+        429
+      ),
   };
 
+  // ─────────────────────────────────────────────
+  // REDIS STORE (SAFE INIT)
+  // ─────────────────────────────────────────────
   try {
     const client = getRedisClient();
-    
-    // Fix: Node-Redis expects an array passed to sendCommand
-    config.store = new RedisStore({
-      sendCommand: async (...args) => client.sendCommand(args),
-      prefix:      `rl:${keyPrefix}:`,
-    });
-  } catch (error) {
-    // Redis unavailable — fallback to memory store is handled automatically
-    // when config.store is undefined.
+
+    if (client) {
+      config.store = new RedisStore({
+        sendCommand: (...args) => client.sendCommand(args),
+        prefix: `rl:${keyPrefix}:`,
+      });
+    }
+  } catch (err) {
+    // fallback silently to memory store
   }
 
   return rateLimit(config);
 };
 
 module.exports = {
-  globalLimiter:  makeLimiter(15 * 60 * 1000, 200,  'global'),
-  authLimiter:    makeLimiter(15 * 60 * 1000, 10,   'auth'),
-  otpLimiter:     makeLimiter(60 * 60 * 1000, 5,    'otp'),
-  paymentLimiter: makeLimiter(60 * 60 * 1000, 20,   'payment'),
-  uploadLimiter:  makeLimiter(60 * 60 * 1000, 30,   'upload'),
-  apiLimiter:     makeLimiter(60 * 1000,       60,   'api'),
+  globalLimiter: makeLimiter(15 * 60 * 1000, 200, 'global'),
+  authLimiter: makeLimiter(15 * 60 * 1000, 10, 'auth'),
+  otpLimiter: makeLimiter(60 * 60 * 1000, 5, 'otp'),
+  paymentLimiter: makeLimiter(60 * 60 * 1000, 20, 'payment'),
+  uploadLimiter: makeLimiter(60 * 60 * 1000, 30, 'upload'),
+  apiLimiter: makeLimiter(60 * 1000, 60, 'api'),
 };
+
+
+// 'use strict';
+
+// const rateLimit  = require('express-rate-limit');
+// const RedisStore = require('rate-limit-redis').default;
+// const { getRedisClient } = require('../config/redis');
+// const ApiResponse = require('../utils/apiResponse');
+
+// /**
+//  * Factory to create configured rate limiters with Redis backing.
+//  * Falls back to in-memory store if Redis is unavailable.
+//  */
+// const makeLimiter = (windowMs, max, keyPrefix) => {
+//   const config = {
+//     windowMs,
+//     limit: max, 
+//     standardHeaders: 'draft-7',
+//     legacyHeaders:   false,
+//     // Prevents the ERR_ERL_KEY_GEN_IPV6 warning/crash
+//     validate: { xForwardedForHeader: false }, 
+//     skip:            () => process.env.NODE_ENV === 'test',
+//     handler:         (req, res) => ApiResponse.error(res, 'Too many requests. Please slow down and try again.', 429),
+//   };
+
+//   try {
+//     const client = getRedisClient();
+    
+//     // Fix: Node-Redis expects an array passed to sendCommand
+//     config.store = new RedisStore({
+//       sendCommand: async (...args) => client.sendCommand(args),
+//       prefix:      `rl:${keyPrefix}:`,
+//     });
+//   } catch (error) {
+//     // Redis unavailable — fallback to memory store is handled automatically
+//     // when config.store is undefined.
+//   }
+
+//   return rateLimit(config);
+// };
+
+// module.exports = {
+//   globalLimiter:  makeLimiter(15 * 60 * 1000, 200,  'global'),
+//   authLimiter:    makeLimiter(15 * 60 * 1000, 10,   'auth'),
+//   otpLimiter:     makeLimiter(60 * 60 * 1000, 5,    'otp'),
+//   paymentLimiter: makeLimiter(60 * 60 * 1000, 20,   'payment'),
+//   uploadLimiter:  makeLimiter(60 * 60 * 1000, 30,   'upload'),
+//   apiLimiter:     makeLimiter(60 * 1000,       60,   'api'),
+// };
 
 // 'use strict';
 

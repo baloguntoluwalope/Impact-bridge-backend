@@ -6,24 +6,45 @@ const logger = require('../utils/logger');
 
 /**
  * ─────────────────────────────────────────────
- * 🔴 REDIS CONNECTION (BULLMQ CORE)
+ * 🔴 VALIDATE REDIS CONFIG
  * ─────────────────────────────────────────────
- * Must use REDIS_URL ONLY (no localhost fallback).
  */
 if (!process.env.REDIS_URL) {
-  logger.error('❌ REDIS_URL is missing. BullMQ cannot start.');
   throw new Error('REDIS_URL is required for BullMQ');
 }
 
+/**
+ * ─────────────────────────────────────────────
+ * 🔌 BASE REDIS CONNECTION (IMPORTANT FIX)
+ * ─────────────────────────────────────────────
+ * ✔ NO tls: {}
+ * ✔ MUST use rediss:// in env for cloud Redis
+ */
 const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 });
 
-connection.on('connect', () => logger.info('✅ BullMQ Redis connected'));
-connection.on('error', (err) =>
-  logger.error(`❌ BullMQ Redis error: ${err.message}`)
-);
+/**
+ * ─────────────────────────────────────────────
+ * 📡 CONNECTION EVENTS
+ * ─────────────────────────────────────────────
+ */
+connection.on('connect', () => {
+  logger.info('✅ Redis connected');
+});
+
+connection.on('ready', () => {
+  logger.info('🚀 Redis ready');
+});
+
+connection.on('error', (err) => {
+  logger.error(`❌ Redis error: ${err.message}`);
+});
+
+connection.on('reconnecting', () => {
+  logger.warn('⚠️ Redis reconnecting...');
+});
 
 /**
  * ─────────────────────────────────────────────
@@ -31,10 +52,18 @@ connection.on('error', (err) =>
  * ─────────────────────────────────────────────
  */
 const defaultJobOptions = {
-  removeOnComplete: { count: 1000, age: 24 * 3600 },
-  removeOnFail: { count: 5000, age: 7 * 24 * 3600 },
   attempts: 3,
   backoff: { type: 'exponential', delay: 2000 },
+
+  removeOnComplete: {
+    count: 1000,
+    age: 24 * 3600,
+  },
+
+  removeOnFail: {
+    count: 5000,
+    age: 7 * 24 * 3600,
+  },
 };
 
 /**
@@ -42,7 +71,7 @@ const defaultJobOptions = {
  * 🧠 QUEUE FACTORY
  * ─────────────────────────────────────────────
  */
-const createQueue = (name, overrides = {}) => {
+const createQueue = async (name, overrides = {}) => {
   const queue = new Queue(name, {
     connection,
     defaultJobOptions: {
@@ -51,51 +80,62 @@ const createQueue = (name, overrides = {}) => {
     },
   });
 
-  const events = new QueueEvents(name, { connection });
+  const events = new QueueEvents(name, {
+    connection: connection.duplicate(),
+  });
 
-  events.on('completed', ({ jobId }) =>
-    logger.info(`[${name}] ✅ Job ${jobId} completed`)
-  );
+  await events.waitUntilReady();
 
-  events.on('failed', ({ jobId, failedReason }) =>
-    logger.error(`[${name}] ❌ Job ${jobId}: ${failedReason}`)
-  );
+  logger.info(`[${name}] Queue ready`);
 
-  events.on('stalled', ({ jobId }) =>
-    logger.warn(`[${name}] ⚠️ Job ${jobId} stalled`)
-  );
+  events.on('completed', ({ jobId }) => {
+    logger.info(`[${name}] Job ${jobId} completed`);
+  });
 
-  return queue;
+  events.on('failed', ({ jobId, failedReason }) => {
+    logger.error(`[${name}] Job ${jobId} failed: ${failedReason}`);
+  });
+
+  events.on('stalled', ({ jobId }) => {
+    logger.warn(`[${name}] Job ${jobId} stalled`);
+  });
+
+  return {
+    queue,
+    events,
+  };
 };
 
 /**
  * ─────────────────────────────────────────────
- * 📦 APPLICATION QUEUES
+ * 📦 INIT ALL QUEUES
  * ─────────────────────────────────────────────
  */
-const queues = {
-  email: createQueue('email', { attempts: 5 }),
-  sms: createQueue('sms', { attempts: 3 }),
-  push: createQueue('push', { attempts: 3 }),
+const initQueues = async () => {
+  return {
+    email: await createQueue('email', { attempts: 5 }),
+    sms: await createQueue('sms'),
+    push: await createQueue('push'),
 
-  payment: createQueue('payment', {
-    attempts: 5,
-    backoff: { type: 'exponential', delay: 3000 },
-  }),
+    payment: await createQueue('payment', {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 3000 },
+    }),
 
-  notification: createQueue('notification', { attempts: 4 }),
-  report: createQueue('report', { attempts: 2 }),
-  reconciliation: createQueue('reconciliation', { attempts: 3 }),
+    notification: await createQueue('notification', { attempts: 4 }),
+    report: await createQueue('report', { attempts: 2 }),
+    reconciliation: await createQueue('reconciliation'),
 
-  deadLetter: createQueue('dead-letter', {
-    attempts: 1,
-    removeOnFail: false,
-  }),
+    deadLetter: await createQueue('dead-letter', {
+      attempts: 1,
+      removeOnFail: false,
+    }),
+  };
 };
 
 /**
  * ─────────────────────────────────────────────
- * 🌊 FLOW PRODUCER (BULLMQ WORKFLOW)
+ * 🌊 FLOW PRODUCER (FIXED - NO DUPLICATION)
  * ─────────────────────────────────────────────
  */
 const flowProducer = new FlowProducer({
@@ -107,14 +147,14 @@ const flowProducer = new FlowProducer({
  * ➕ ADD JOB
  * ─────────────────────────────────────────────
  */
-const addJob = async (queueName, jobName, data, opts = {}) => {
-  const queue = queues[queueName];
+const addJob = async (queues, queueName, jobName, data, opts = {}) => {
+  const q = queues[queueName];
 
-  if (!queue) {
-    throw new Error(`Queue "${queueName}" does not exist`);
+  if (!q) {
+    throw new Error(`Queue "${queueName}" not found`);
   }
 
-  return queue.add(jobName, data, opts);
+  return q.queue.add(jobName, data, opts);
 };
 
 /**
@@ -122,8 +162,8 @@ const addJob = async (queueName, jobName, data, opts = {}) => {
  * ☠️ DEAD LETTER QUEUE
  * ─────────────────────────────────────────────
  */
-const sendToDeadLetter = async (originalQueue, data, reason) => {
-  return queues.deadLetter.add('dlq_job', {
+const sendToDeadLetter = async (queues, originalQueue, data, reason) => {
+  return queues.deadLetter.queue.add('dlq_job', {
     original_queue: originalQueue,
     data,
     reason,
@@ -133,19 +173,36 @@ const sendToDeadLetter = async (originalQueue, data, reason) => {
 
 /**
  * ─────────────────────────────────────────────
- * 📤 EXPORTS
+ * 🛑 GRACEFUL SHUTDOWN
  * ─────────────────────────────────────────────
  */
+const shutdown = async (queues) => {
+  logger.info('🛑 Shutting down BullMQ...');
+
+  const tasks = [];
+
+  for (const key in queues) {
+    const q = queues[key];
+
+    tasks.push(q.queue.close());
+    tasks.push(q.events.close());
+  }
+
+  tasks.push(connection.quit());
+  tasks.push(flowProducer.close());
+
+  await Promise.allSettled(tasks);
+
+  logger.info('✅ BullMQ shutdown complete');
+};
+
 module.exports = {
-  queues,
-  connection,
+  initQueues,
   addJob,
   sendToDeadLetter,
   flowProducer,
+  shutdown,
 };
-
-
-
 // 'use strict';
 
 // const { Queue, Worker, QueueEvents, FlowProducer } = require('bullmq');
