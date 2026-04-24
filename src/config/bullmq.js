@@ -1,169 +1,65 @@
 'use strict';
 
-const { Queue, QueueEvents, FlowProducer } = require('bullmq');
+const { Queue, FlowProducer } = require('bullmq');
 const IORedis = require('ioredis');
 const logger = require('../utils/logger');
 
 /**
- * ─────────────────────────────────────────────
- * 🔴 VALIDATE REDIS CONFIG
- * ─────────────────────────────────────────────
- */
-if (!process.env.REDIS_URL) {
-  throw new Error('REDIS_URL is required for BullMQ');
-}
-
-/**
- * ─────────────────────────────────────────────
- * 🔌 BASE REDIS CONNECTION (IMPORTANT FIX)
- * ─────────────────────────────────────────────
- * ✔ NO tls: {}
- * ✔ MUST use rediss:// in env for cloud Redis
+ * 🔌 REDIS CONNECTION
+ * BullMQ requires maxRetriesPerRequest: null
  */
 const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
+  // If using Render/Managed Redis, 'rediss://' in the URL handles TLS
 });
 
-/**
- * ─────────────────────────────────────────────
- * 📡 CONNECTION EVENTS
- * ─────────────────────────────────────────────
- */
-connection.on('connect', () => {
-  logger.info('✅ Redis connected');
-});
-
-connection.on('ready', () => {
-  logger.info('🚀 Redis ready');
-});
-
-connection.on('error', (err) => {
-  logger.error(`❌ Redis error: ${err.message}`);
-});
-
-connection.on('reconnecting', () => {
-  logger.warn('⚠️ Redis reconnecting...');
-});
-
-/**
- * ─────────────────────────────────────────────
- * ⚙️ DEFAULT JOB OPTIONS
- * ─────────────────────────────────────────────
- */
 const defaultJobOptions = {
   attempts: 3,
   backoff: { type: 'exponential', delay: 2000 },
-
-  removeOnComplete: {
-    count: 1000,
-    age: 24 * 3600,
-  },
-
-  removeOnFail: {
-    count: 5000,
-    age: 7 * 24 * 3600,
-  },
+  removeOnComplete: { count: 1000, age: 24 * 3600 },
+  removeOnFail: { count: 5000, age: 7 * 24 * 3600 },
 };
 
 /**
- * ─────────────────────────────────────────────
- * 🧠 QUEUE FACTORY
- * ─────────────────────────────────────────────
+ * 🧠 QUEUE INSTANTIATION
+ * We create these immediately so they can be exported synchronously.
  */
-const createQueue = async (name, overrides = {}) => {
-  const queue = new Queue(name, {
+const createQueue = (name, overrides = {}) => {
+  return new Queue(name, {
     connection,
-    defaultJobOptions: {
-      ...defaultJobOptions,
-      ...overrides,
-    },
+    defaultJobOptions: { ...defaultJobOptions, ...overrides },
   });
+};
 
-  const events = new QueueEvents(name, {
-    connection: connection.duplicate(),
-  });
-
-  await events.waitUntilReady();
-
-  logger.info(`[${name}] Queue ready`);
-
-  events.on('completed', ({ jobId }) => {
-    logger.info(`[${name}] Job ${jobId} completed`);
-  });
-
-  events.on('failed', ({ jobId, failedReason }) => {
-    logger.error(`[${name}] Job ${jobId} failed: ${failedReason}`);
-  });
-
-  events.on('stalled', ({ jobId }) => {
-    logger.warn(`[${name}] Job ${jobId} stalled`);
-  });
-
-  return {
-    queue,
-    events,
-  };
+const queues = {
+  email:          createQueue('email', { attempts: 5 }),
+  sms:            createQueue('sms'),
+  push:           createQueue('push'),
+  payment:        createQueue('payment', { attempts: 5 }),
+  notification:   createQueue('notification', { attempts: 4 }),
+  report:         createQueue('report'),
+  reconciliation: createQueue('reconciliation'),
+  deadLetter:     createQueue('dead-letter', { attempts: 1, removeOnFail: false }),
 };
 
 /**
- * ─────────────────────────────────────────────
- * 📦 INIT ALL QUEUES
- * ─────────────────────────────────────────────
+ * ➕ ADD JOB HELPER
+ * Signature: addJob(queueName, jobName, data, opts)
  */
-const initQueues = async () => {
-  return {
-    email: await createQueue('email', { attempts: 5 }),
-    sms: await createQueue('sms'),
-    push: await createQueue('push'),
-
-    payment: await createQueue('payment', {
-      attempts: 5,
-      backoff: { type: 'exponential', delay: 3000 },
-    }),
-
-    notification: await createQueue('notification', { attempts: 4 }),
-    report: await createQueue('report', { attempts: 2 }),
-    reconciliation: await createQueue('reconciliation'),
-
-    deadLetter: await createQueue('dead-letter', {
-      attempts: 1,
-      removeOnFail: false,
-    }),
-  };
-};
-
-/**
- * ─────────────────────────────────────────────
- * 🌊 FLOW PRODUCER (FIXED - NO DUPLICATION)
- * ─────────────────────────────────────────────
- */
-const flowProducer = new FlowProducer({
-  connection,
-});
-
-/**
- * ─────────────────────────────────────────────
- * ➕ ADD JOB
- * ─────────────────────────────────────────────
- */
-const addJob = async (queues, queueName, jobName, data, opts = {}) => {
+const addJob = async (queueName, jobName, data, opts = {}) => {
   const q = queues[queueName];
-
   if (!q) {
-    throw new Error(`Queue "${queueName}" not found`);
+    throw new Error(`Queue "${queueName}" not found. Available: ${Object.keys(queues).join(', ')}`);
   }
-
-  return q.queue.add(jobName, data, opts);
+  return q.add(jobName, data, opts);
 };
 
 /**
- * ─────────────────────────────────────────────
- * ☠️ DEAD LETTER QUEUE
- * ─────────────────────────────────────────────
+ * ☠️ DEAD LETTER HELPER
  */
-const sendToDeadLetter = async (queues, originalQueue, data, reason) => {
-  return queues.deadLetter.queue.add('dlq_job', {
+const sendToDeadLetter = async (originalQueue, data, reason) => {
+  return queues.deadLetter.add('dlq_job', {
     original_queue: originalQueue,
     data,
     reason,
@@ -171,39 +67,20 @@ const sendToDeadLetter = async (queues, originalQueue, data, reason) => {
   });
 };
 
-/**
- * ─────────────────────────────────────────────
- * 🛑 GRACEFUL SHUTDOWN
- * ─────────────────────────────────────────────
- */
-const shutdown = async (queues) => {
-  logger.info('🛑 Shutting down BullMQ...');
-
-  const tasks = [];
-
-  for (const key in queues) {
-    const q = queues[key];
-
-    tasks.push(q.queue.close());
-    tasks.push(q.events.close());
-  }
-
-  tasks.push(connection.quit());
-  tasks.push(flowProducer.close());
-
-  await Promise.allSettled(tasks);
-
-  logger.info('✅ BullMQ shutdown complete');
-};
+const flowProducer = new FlowProducer({ connection });
 
 module.exports = {
-  initQueues,
+  queues,
   addJob,
   sendToDeadLetter,
   flowProducer,
-  shutdown,
-  connection,
+  connection, // Exported for worker.js
 };
+
+
+
+
+
 // 'use strict';
 
 // const { Queue, Worker, QueueEvents, FlowProducer } = require('bullmq');
