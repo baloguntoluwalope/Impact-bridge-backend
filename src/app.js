@@ -29,34 +29,34 @@ app.use(
 /* ─────────────────────────────────────────────
    CORS FIX (ROBUST VERSION)
 ───────────────────────────────────────────── */
+app.use(cors());
+// const allowedOrigins = [
+//   'http://localhost:5173',
+//   'http://127.0.0.1:5173',
+//   process.env.FRONTEND_URL, // production frontend
+// ].filter(Boolean);
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  process.env.FRONTEND_URL, // production frontend
-].filter(Boolean);
+// app.use(
+//   cors({
+//     origin: (origin, callback) => {
+//       // allow REST tools (Postman, server-to-server)
+//       if (!origin) return callback(null, true);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // allow REST tools (Postman, server-to-server)
-      if (!origin) return callback(null, true);
+//       if (allowedOrigins.includes(origin)) {
+//         return callback(null, true);
+//       }
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+//       console.log('❌ CORS blocked:', origin);
+//       return callback(null, false); // explicitly block
+//     },
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
+//   })
+// );
 
-      console.log('❌ CORS blocked:', origin);
-      return callback(null, false); // explicitly block
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
-  })
-);
-
-// IMPORTANT: preflight must be enabled properly
-app.options('*', cors());
+// // IMPORTANT: preflight must be enabled properly
+// app.options('*', cors());
 
 /* ─────────────────────────────────────────────
    BODY PARSING
