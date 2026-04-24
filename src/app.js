@@ -12,7 +12,6 @@ const compression   = require('compression');
 const swaggerUi     = require('swagger-ui-express');
 const swaggerSpec   = require('./config/swagger');
 
-const { globalLimiter }          = require('./middleware/rateLimiter');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 
@@ -21,42 +20,43 @@ const app = express();
 /* ─────────────────────────────────────────────
    SECURITY
 ───────────────────────────────────────────── */
-app.use(helmet({
-  crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
-      styleSrc:   ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
-      imgSrc:     ["'self'", 'data:', 'res.cloudinary.com'],
-      fontSrc:    ["'self'", 'cdn.jsdelivr.net'],
-      connectSrc: ["'self'"],
-    },
-  },
-}));
+app.use(
+  helmet({
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
 /* ─────────────────────────────────────────────
-   CORS (FIXED for preflight + production)
+   CORS FIX (ROBUST VERSION)
 ───────────────────────────────────────────── */
-const allowed = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowed.includes(origin)) return callback(null, true);
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  process.env.FRONTEND_URL, // production frontend
+].filter(Boolean);
 
-    console.log("❌ CORS blocked:", origin);
-    return callback(null, false);
-  },
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','X-Idempotency-Key'],
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // allow REST tools (Postman, server-to-server)
+      if (!origin) return callback(null, true);
 
-app.options('*', cors()); // 🔥 IMPORTANT FIX
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.log('❌ CORS blocked:', origin);
+      return callback(null, false); // explicitly block
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
+  })
+);
+
+// IMPORTANT: preflight must be enabled properly
+app.options('*', cors());
 
 /* ─────────────────────────────────────────────
    BODY PARSING
@@ -79,16 +79,18 @@ app.use(compression());
    LOGGING
 ───────────────────────────────────────────── */
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined', {
-    stream: { write: msg => logger.http(msg.trim()) },
-  }));
+  app.use(
+    morgan('combined', {
+      stream: { write: msg => logger.http(msg.trim()) },
+    })
+  );
 }
 
 /* ─────────────────────────────────────────────
    ROOT ROUTE
 ───────────────────────────────────────────── */
 app.get('/api/v1', (req, res) => {
-  res.status(200).json({
+  res.json({
     success: true,
     message: 'Impact Bridge API v1 is running',
   });
@@ -100,80 +102,47 @@ app.get('/api/v1', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    platform: 'Impact Bridge',
-    version: process.env.API_VERSION || 'v1',
-    environment: process.env.NODE_ENV || 'development',
-    uptime: Math.floor(process.uptime()),
+    uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });
 });
 
 /* ─────────────────────────────────────────────
-   SWAGGER
-───────────────────────────────────────────── */
-if (process.env.SWAGGER_ENABLED !== 'false') {
-  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-}
-
-/* ─────────────────────────────────────────────
-   SAFE REQUIRE FUNCTION (CRITICAL FIX)
+   SAFE REQUIRE
 ───────────────────────────────────────────── */
 function safeRequire(path) {
   try {
-    console.log(`📦 Loading ${path}`);
     return require(path);
   } catch (err) {
-    console.error(`❌ Failed ${path}:`, err.message);
+    console.error(`❌ Failed to load ${path}:`, err.message);
     return null;
   }
 }
 
 /* ─────────────────────────────────────────────
-   ROUTES (SAFE LOADING)
-───────────────────────────────────────────── */
-const authRoutes         = safeRequire('./modules/auth/auth.routes');
-const userRoutes         = safeRequire('./modules/users/user.routes');
-const requestRoutes      = safeRequire('./modules/requests/request.routes');
-const verificationRoutes = safeRequire('./modules/verification/verification.routes');
-const paymentRoutes      = safeRequire('./modules/payments/payment.routes');
-const walletRoutes       = safeRequire('./modules/wallets/wallet.routes');
-const notifRoutes        = safeRequire('./modules/notifications/notification.routes');
-const dashboardRoutes    = safeRequire('./modules/dashboards/dashboard.routes');
-const contactRoutes      = safeRequire('./modules/contact/contact.routes');
-const sdgRoutes          = safeRequire('./modules/sdg/sdg.routes');
-const reportRoutes       = safeRequire('./modules/reports/reports.routes');
-const adminRoutes        = safeRequire('./modules/admin/admin.routes');
-const ngoRoutes          = safeRequire('./modules/ngos/ngo.routes');
-const projectRoutes      = safeRequire('./modules/projects/project.routes');
-const analyticsRoutes    = safeRequire('./modules/analytics/analytics.routes');
-const governmentRoutes   = safeRequire('./modules/government/government.routes');
-const donorRoutes        = safeRequire('./modules/donors/donor.routes');
-const whatsappRoutes     = safeRequire('./modules/whatsapp/whatsapp.routes');
-
-/* ─────────────────────────────────────────────
-   API v1 ROUTER (NO CRASH GUARANTEE)
+   ROUTES
 ───────────────────────────────────────────── */
 const v1 = express.Router();
 
 const routes = [
-  ['auth', authRoutes],
-  ['users', userRoutes],
-  ['requests', requestRoutes],
-  ['verification', verificationRoutes],
-  ['payments', paymentRoutes],
-  ['wallets', walletRoutes],
-  ['notifications', notifRoutes],
-  ['dashboards', dashboardRoutes],
-  ['contact', contactRoutes],
-  ['sdg', sdgRoutes],
-  ['reports', reportRoutes],
-  ['admin', adminRoutes],
-  ['ngos', ngoRoutes],
-  ['projects', projectRoutes],
-  ['analytics', analyticsRoutes],
-  ['government', governmentRoutes],
-  ['donors', donorRoutes],
-  ['whatsapp', whatsappRoutes],
+  ['auth', safeRequire('./modules/auth/auth.routes')],
+  ['users', safeRequire('./modules/users/user.routes')],
+  ['requests', safeRequire('./modules/requests/request.routes')],
+  ['verification', safeRequire('./modules/verification/verification.routes')],
+  ['payments', safeRequire('./modules/payments/payment.routes')],
+  ['wallets', safeRequire('./modules/wallets/wallet.routes')],
+  ['notifications', safeRequire('./modules/notifications/notification.routes')],
+  ['dashboards', safeRequire('./modules/dashboards/dashboard.routes')],
+  ['contact', safeRequire('./modules/contact/contact.routes')],
+  ['sdg', safeRequire('./modules/sdg/sdg.routes')],
+  ['reports', safeRequire('./modules/reports/reports.routes')],
+  ['admin', safeRequire('./modules/admin/admin.routes')],
+  ['ngos', safeRequire('./modules/ngos/ngo.routes')],
+  ['projects', safeRequire('./modules/projects/project.routes')],
+  ['analytics', safeRequire('./modules/analytics/analytics.routes')],
+  ['government', safeRequire('./modules/government/government.routes')],
+  ['donors', safeRequire('./modules/donors/donor.routes')],
+  ['whatsapp', safeRequire('./modules/whatsapp/whatsapp.routes')],
 ];
 
 routes.forEach(([name, route]) => {
@@ -187,7 +156,7 @@ routes.forEach(([name, route]) => {
 
 app.use('/api/v1', v1);
 
-console.log("🚀 API v1 READY at /api/v1");
+console.log('🚀 API v1 READY at /api/v1');
 
 /* ─────────────────────────────────────────────
    ERROR HANDLERS
