@@ -35,10 +35,10 @@ const walletSchema = new mongoose.Schema({
   metadata:         { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
-walletSchema.index({ request: 1 });
-walletSchema.index({ project: 1 });
-walletSchema.index({ wallet_type: 1 });
-walletSchema.index({ reference: 1 }, { unique: true });
+// walletSchema.index({ request: 1 });
+// walletSchema.index({ project: 1 });
+// walletSchema.index({ wallet_type: 1 });
+// walletSchema.index({ reference: 1 }, { unique: true });
 
 walletSchema.virtual('remaining_balance').get(function () {
   return this.total_received - this.spent_funds;

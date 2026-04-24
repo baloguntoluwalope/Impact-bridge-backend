@@ -105,6 +105,13 @@ if (process.env.SWAGGER_ENABLED !== 'false') {
   });
 }
 
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "🚀 Impact Bridge backend is running"
+  });
+});
+
 // ── 9. Global rate limiter ────────────────────────────────────────
 app.use('/api/', globalLimiter);
 

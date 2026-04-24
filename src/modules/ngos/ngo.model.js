@@ -23,8 +23,8 @@ const ngoSchema = new mongoose.Schema({
   total_completed:     { type: Number, default: 0 },
 }, { timestamps: true });
 
-ngoSchema.index({ slug: 1 }, { unique: true });
-ngoSchema.index({ is_verified: 1, is_active: 1 });
+// ngoSchema.index({ slug: 1 }, { unique: true });
+// ngoSchema.index({ is_verified: 1, is_active: 1 });
 
 ngoSchema.pre('save', function (next) {
   if (this.isNew && this.name && !this.slug) {

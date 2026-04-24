@@ -62,8 +62,8 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // ── Indexes ───────────────────────────────────────────────────────
-userSchema.index({ email: 1 });
-userSchema.index({ phone: 1 });
+// userSchema.index({ email: 1 });
+// userSchema.index({ phone: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ state: 1, lga: 1 });
 userSchema.index({ is_active: 1 });

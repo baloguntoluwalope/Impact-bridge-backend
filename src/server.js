@@ -74,16 +74,16 @@ const start = async () => {
     // ─────────────────────────────────────────────
     // 6. SDG CHECK
     // ─────────────────────────────────────────────
-    const SDG = require('./modules/sdg/sdg.model');
+    // const SDG = require('./modules/sdg/sdg.model');
 
-    log.start('Checking SDG data...');
-    const sdgCount = await SDG.countDocuments();
+    // log.start('Checking SDG data...');
+    // const sdgCount = await SDG.countDocuments();
 
-    if (sdgCount === 0) {
-      log.warn('No SDGs found — run seed endpoint when needed');
-    } else {
-      log.success(`SDGs loaded: ${sdgCount}`);
-    }
+    // if (sdgCount === 0) {
+    //   log.warn('No SDGs found — run seed endpoint when needed');
+    // } else {
+    //   log.success(`SDGs loaded: ${sdgCount}`);
+    // }
 
     // ─────────────────────────────────────────────
     // 7. START SERVER

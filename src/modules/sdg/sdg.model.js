@@ -13,7 +13,7 @@ const sdgSchema = new mongoose.Schema({
   is_active:    { type: Boolean, default: true },
 }, { timestamps: true });
 
-sdgSchema.index({ number: 1 }, { unique: true });
-sdgSchema.index({ category: 1 }, { unique: true });
+// sdgSchema.index({ number: 1 }, { unique: true });
+// sdgSchema.index({ category: 1 }, { unique: true });
 
 module.exports = mongoose.model('SDG', sdgSchema);
