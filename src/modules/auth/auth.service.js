@@ -30,13 +30,16 @@ const register = async (data) => {
     otp_expires: expiry,
   });
 
-  await addJob('email', 'send_otp', {
-    to:       user.email,
-    subject:  'Verify Your Email – Impact Bridge',
-    template: 'otp_verification',
-    data:     { name: user.first_name, otp, expiry: process.env.OTP_EXPIRY_MINUTES || 10 },
-  });
-
+ await addJob('send_otp', {
+  to: user.email,
+  subject: 'Verify Your Email – Impact Bridge',
+  template: 'otp_verification',
+  data: {
+    name: user.first_name,
+    otp,
+    expiry: process.env.OTP_EXPIRY_MINUTES || 10,
+  },
+});
   logger.info(`User registered: ${user.email} [${user.role}]`);
   return { user: { _id: user._id, email: user.email, role: user.role, full_name: `${user.first_name} ${user.last_name}` } };
 };
@@ -103,7 +106,7 @@ const resendOTP = async (email, type = 'email_verification') => {
   const expiry = new Date(Date.now() + parseInt(process.env.OTP_EXPIRY_MINUTES || 10) * 60000);
   await User.findByIdAndUpdate(user._id, { otp: hashData(otp), otp_type: type, otp_expires: expiry });
 
-  await addJob('email', 'resend_otp', {
+  await addJob('resend_otp', {
     to:       user.email,
     subject:  'New Verification Code – Impact Bridge',
     template: 'otp_verification',
@@ -123,7 +126,7 @@ const forgotPassword = async (email) => {
   const redis       = getRedisClient();
   await redis.setEx(`pwd_reset:${hashedToken}`, 3600, user._id.toString());
 
-  await addJob('email', 'password_reset', {
+  await addJob('password_reset', {
     to:       user.email,
     subject:  'Password Reset – Impact Bridge',
     template: 'password_reset',
