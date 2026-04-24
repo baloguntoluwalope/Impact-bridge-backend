@@ -217,23 +217,27 @@ app.use(helmet({
 }));
 
 // ── 2. CORS ───────────────────────────────────────────────────────
-app.use(cors({
-  origin: (origin, callback) => {
-    const allowed = (process.env.ALLOWED_ORIGINS || '')
-      .split(',')
-      .map((o) => o.trim())
-      .filter(Boolean);
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 
-    // Allow in dev, block unknown origins in production
-    if (!origin || allowed.includes(origin) || process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      callback(new Error(`CORS blocked: ${origin}`));
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow server-to-server / Postman
+    if (!origin) return callback(null, true);
+
+    // Allow dev + production origins
+    if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
     }
+
+    console.log("❌ CORS BLOCKED:", origin);
+    return callback(null, false);
   },
-  methods:        ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization','X-Idempotency-Key'],
-  credentials:    true,
+  credentials: true,
 }));
 
 // ── 3. Webhook raw body (MUST come before JSON parser) ────────────
