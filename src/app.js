@@ -43,45 +43,29 @@ app.use(
 const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
-  process.env.FRONTEND_URL,
-].filter(Boolean);
+  'https://impact-bridge-frontend.vercel.app',
+];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true); // allow tools like Postman
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      logger.warn(`❌ CORS blocked: ${origin}`);
-      return callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-  })
-);
+    console.log('❌ CORS blocked:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
+};
 
-// app.use(
-//   cors({
-//     origin: (origin, callback) => {
-//       if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-//         return callback(null, true);
-//       }
-//       logger.warn(`CORS blocked: ${origin}`);
-//       return callback(null, false);
-//     },
-//     credentials: true,
-//     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-//     allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
-//   })
-// );
-// app.options('*', cors());
+app.use(cors(corsOptions));
 
-app.options('*', cors({
-  origin: allowedOrigins,
-  credentials: true
-}));
+// ✅ THIS IS THE KEY FIX
+app.options('*', cors(corsOptions));
 
 /* ─────────────────────────────────────────────
    WEBHOOK RAW BODY
