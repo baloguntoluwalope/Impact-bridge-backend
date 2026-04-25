@@ -49,18 +49,39 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      logger.warn(`CORS blocked: ${origin}`);
-      return callback(null, false);
+
+      logger.warn(`❌ CORS blocked: ${origin}`);
+      return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
   })
 );
-app.options('*', cors());
+
+// app.use(
+//   cors({
+//     origin: (origin, callback) => {
+//       if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+//         return callback(null, true);
+//       }
+//       logger.warn(`CORS blocked: ${origin}`);
+//       return callback(null, false);
+//     },
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
+//   })
+// );
+// app.options('*', cors());
+
+app.options('*', cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 
 /* ─────────────────────────────────────────────
    WEBHOOK RAW BODY
