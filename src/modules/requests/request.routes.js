@@ -15,6 +15,8 @@ const auditLog          = require('../../middleware/auditLog');
  *     description: Social impact cases — submit, browse, track progress
  */
 
+// ── Public ──────────────────────────────────────────────────────
+
 /**
  * @swagger
  * /requests:
@@ -86,6 +88,17 @@ router.get('/', apiLimiter, optionalAuth, ctrl.getVerified);
  *     responses:
  *       200:
  *         description: Featured requests
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Request'
  */
 router.get('/featured', ctrl.getFeatured);
 
@@ -107,8 +120,16 @@ router.get('/featured', ctrl.getFeatured);
  *     responses:
  *       200:
  *         description: Search results ranked by relevance
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
  */
 router.get('/search', ctrl.search);
+
+// ── Auth-protected (specific paths MUST come before /:id) ────────
 
 /**
  * @swagger
@@ -123,14 +144,84 @@ router.get('/search', ctrl.search);
  *       - $ref: '#/components/parameters/LimitParam'
  *       - in: query
  *         name: status
- *         schema: { type: string, enum: [draft, submitted, under_review, verified, rejected, funded, in_progress, completed] }
+ *         schema:
+ *           type: string
+ *           enum: [draft, submitted, under_review, verified, rejected, funded, in_progress, completed]
  *     responses:
  *       200:
  *         description: User's requests
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
 router.get('/me', authenticate, ctrl.getMyRequests);
+
+/**
+ * @swagger
+ * /requests/admin/queue:
+ *   get:
+ *     summary: Admin — get requests pending verification
+ *     description: |
+ *       Returns requests filtered by verification status for the admin queue.
+ *       Accepts comma-separated status values.
+ *       Defaults to: submitted, under_review, field_verification, more_info_requested.
+ *
+ *       **Note:** This route is declared before `GET /requests/{id}` in Express
+ *       to prevent "admin" from being matched as a request ID param.
+ *     tags: [Requests]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *         description: Comma-separated statuses to filter by
+ *         example: submitted,under_review,field_verification,more_info_requested
+ *       - in: query
+ *         name: category
+ *         schema: { type: string }
+ *         description: Filter by SDG category slug
+ *       - in: query
+ *         name: urgency
+ *         schema: { type: string, enum: [low, medium, high, critical] }
+ *         description: Filter by urgency level
+ *       - $ref: '#/components/parameters/PageParam'
+ *       - $ref: '#/components/parameters/LimitParam'
+ *     responses:
+ *       200:
+ *         description: Pending requests for the verification queue
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Request'
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     total: { type: integer }
+ *                     page:  { type: integer }
+ *                     pages: { type: integer }
+ *                     limit: { type: integer }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ */
+router.get(
+  '/admin/queue',
+  authenticate,
+  authorize('super_admin', 'admin'),
+  ctrl.getAdminQueue
+);
+
+// ── Dynamic param routes ──────────────────────────────────────────
 
 /**
  * @swagger
@@ -164,8 +255,8 @@ router.get('/:id', optionalAuth, ctrl.getById);
  *   post:
  *     summary: Submit a new social impact request
  *     description: |
- *       Submit a need for funding. The request starts in 'submitted' status and goes through verification
- *       before becoming visible to donors.
+ *       Submit a need for funding. The request starts in 'submitted' status and goes through
+ *       verification before becoming visible to donors.
  *
  *       **State flow:** draft → submitted → under_review → verified → funded → in_progress → completed
  *
@@ -237,6 +328,8 @@ router.post(
  *         description: Cannot update — request is beyond submitted status
  *       403:
  *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  */
 router.patch(
   '/:id',
@@ -265,8 +358,12 @@ router.patch(
  *             type: object
  *             required: [title, description]
  *             properties:
- *               title:       { type: string, example: Week 2 Update }
- *               description: { type: string, example: Roof materials delivered to site... }
+ *               title:
+ *                 type: string
+ *                 example: Week 2 Update
+ *               description:
+ *                 type: string
+ *                 example: Roof materials delivered to site...
  *               media:
  *                 type: array
  *                 items: { type: string, format: binary }
@@ -278,6 +375,8 @@ router.patch(
  *         $ref: '#/components/responses/Unauthorized'
  *       403:
  *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  */
 router.post(
   '/:id/progress',
@@ -299,11 +398,13 @@ router.post(
  *       - $ref: '#/components/parameters/IdParam'
  *     responses:
  *       200:
- *         description: Request deleted
+ *         description: Request deleted successfully
  *       400:
- *         description: Cannot delete — request is in active or funded state
+ *         description: Cannot delete — request is in an active or funded state
  *       403:
  *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  */
 router.delete('/:id', authenticate, auditLog('DELETE', 'Request'), ctrl.deleteRequest);
 

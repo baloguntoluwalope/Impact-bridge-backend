@@ -1,7 +1,8 @@
 'use strict';
 
-const svc = require('./request.service');
-const R   = require('../../utils/apiResponse');
+const Request = require('./request.model');
+const svc     = require('./request.service');
+const R       = require('../../utils/apiResponse');
 
 module.exports = {
   create: async (req, res) => {
@@ -47,5 +48,44 @@ module.exports = {
   deleteRequest: async (req, res) => {
     const data = await svc.deleteRequest(req.params.id, req.user._id, req.user.role);
     R.success(res, null, data.message);
+  },
+
+  // ── Admin: verification queue ──────────────────────────────────
+  getAdminQueue: async (req, res, next) => {
+    try {
+      const page  = Math.max(1, parseInt(req.query.page)  || 1);
+      const limit = Math.min(100, parseInt(req.query.limit) || 50);
+      const skip  = (page - 1) * limit;
+
+      const statusParam = req.query.status
+        || 'submitted,under_review,field_verification,more_info_requested';
+      const statuses = statusParam.split(',').map(s => s.trim());
+
+      const filter = { status: { $in: statuses } };
+      if (req.query.category) filter.category = req.query.category;
+      if (req.query.urgency)  filter.urgency  = req.query.urgency;
+
+      const [data, total] = await Promise.all([
+        Request.find(filter)
+          .populate('requester', 'first_name last_name email avatar')
+          .sort({ created_at: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Request.countDocuments(filter),
+      ]);
+
+      res.json({
+        data,
+        pagination: {
+          total,
+          page,
+          pages: Math.ceil(total / limit),
+          limit,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
   },
 };
