@@ -2,7 +2,6 @@
 
 const mongoose = require('mongoose');
 
-// SDG category → number mapping
 const SDG_MAP = {
   no_poverty:1, zero_hunger:2, good_health:3, quality_education:4,
   gender_equality:5, clean_water:6, affordable_energy:7, decent_work:8,
@@ -40,19 +39,37 @@ const requestSchema = new mongoose.Schema({
   requester:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   requester_type: { type: String, enum: ['individual','student','school','community','ngo'], required: true },
 
-  // Location
   state:       { type: String, required: true },
   lga:         { type: String, required: true },
   address:     { type: String },
   coordinates: { lat: { type: Number }, lng: { type: Number } },
 
-  // Funding
+  /* ── Funding ───────────────────────────────────────────────
+     amount_needed  = original requester ask (never changes after submission)
+     amount_raised  = what donors have contributed so far
+     Donors fund towards fees.total_funding_target (if fees calculated)
+     or amount_needed (if not yet approved)
+  ─────────────────────────────────────────────────────────── */
   amount_needed:    { type: Number, required: true },
   amount_raised:    { type: Number, default: 0 },
   amount_disbursed: { type: Number, default: 0 },
   donor_count:      { type: Number, default: 0 },
 
-  // Status
+  /* ── Fees (locked at approval time) ────────────────────────
+     Calculated once when admin verifies/approves the request.
+     Added on top of amount_needed so requester gets full amount.
+  ─────────────────────────────────────────────────────────── */
+  fees: {
+    original_amount:        { type: Number },          // snapshot of amount_needed
+    ngo_execution_fee:      { type: Number, default: 0 },
+    ngo_execution_fee_pct:  { type: Number, default: 10 },
+    platform_fee:           { type: Number, default: 0 },
+    platform_fee_pct:       { type: Number, default: 5 },
+    total_funding_target:   { type: Number },          // shown to donors
+    calculated_at:          { type: Date },
+    calculated_by:          { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+
   status: {
     type:    String,
     enum:    ['draft','submitted','under_review','verified','rejected','funded','in_progress','completed','cancelled'],
@@ -61,10 +78,8 @@ const requestSchema = new mongoose.Schema({
   urgency:             { type: String, enum: ['low','medium','high','critical'], default: 'medium' },
   beneficiaries_count: { type: Number, default: 1 },
 
-  // Media
   media: [mediaSchema],
 
-  // Verification
   verification: {
     verified_by:      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     verified_at:      { type: Date },
@@ -73,22 +88,21 @@ const requestSchema = new mongoose.Schema({
     rejection_reason: { type: String },
     notes:            [{ type: String }],
     fraud_score:      { type: Number, default: 0 },
+    ai_check:         { type: mongoose.Schema.Types.Mixed },
+    ai_final:         { type: mongoose.Schema.Types.Mixed },
   },
 
-  // NGO
-  assigned_ngo:      { type: mongoose.Schema.Types.ObjectId, ref: 'NGO' },
+  assigned_ngo:      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   progress_updates:  [progressSchema],
   ngo_field_reports: [progressSchema],
   completion_proof:  [mediaSchema],
   completed_at:      { type: Date },
 
-  // Visibility
   is_visible:  { type: Boolean, default: false },
   is_featured: { type: Boolean, default: false },
   is_archived: { type: Boolean, default: false },
   views:       { type: Number, default: 0 },
 
-  // Meta
   tags:             [{ type: String }],
   impact_statement: { type: String, maxlength: 500 },
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
@@ -99,31 +113,38 @@ requestSchema.index({ requester: 1 });
 requestSchema.index({ state: 1, lga: 1 });
 requestSchema.index({ category: 1 });
 requestSchema.index({ sdg_number: 1 });
-requestSchema.index({ created_at: -1 });
+requestSchema.index({ createdAt: -1 });
 requestSchema.index({ amount_raised: -1 });
 requestSchema.index({ is_featured: 1, status: 1 });
-requestSchema.index({ '$**': 'text' }); // Full-text search
+requestSchema.index({ 'fees.total_funding_target': 1 });
+requestSchema.index({ '$**': 'text' });
 
 // ── Virtuals ──────────────────────────────────────────────────────
+// The target donors fund towards
+requestSchema.virtual('funding_target').get(function () {
+  return this.fees?.total_funding_target || this.amount_needed;
+});
+
+// Progress % against total_funding_target (or amount_needed if not yet approved)
 requestSchema.virtual('funding_percentage').get(function () {
-  return this.amount_needed > 0
-    ? Math.min(Math.round((this.amount_raised / this.amount_needed) * 100), 100)
-    : 0;
+  const target = this.fees?.total_funding_target || this.amount_needed;
+  return target > 0 ? Math.min(Math.round((this.amount_raised / target) * 100), 100) : 0;
 });
 
 requestSchema.virtual('is_fully_funded').get(function () {
-  return this.amount_raised >= this.amount_needed;
+  const target = this.fees?.total_funding_target || this.amount_needed;
+  return this.amount_raised >= target;
 });
 
-// ── Hooks ─────────────────────────────────────────────────────────
-// ── Hooks ─────────────────────────────────────────────────────────
+requestSchema.virtual('fees_calculated').get(function () {
+  return !!(this.fees?.total_funding_target && this.fees?.calculated_at);
+});
+
+// ── Hook ──────────────────────────────────────────────────────────
 requestSchema.pre('save', function () {
-  // Auto-set SDG number from category
   if (this.category && SDG_MAP[this.category]) {
     this.sdg_number = SDG_MAP[this.category];
   }
-  // No next() needed here if you aren't doing async work, 
-  // but removing the parameter solves the "not a function" crash.
 });
 
 module.exports = mongoose.model('Request', requestSchema);

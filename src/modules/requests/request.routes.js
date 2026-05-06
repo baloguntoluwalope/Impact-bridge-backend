@@ -3,16 +3,18 @@
 const router = require('express').Router();
 const ctrl   = require('./request.controller');
 const { authenticate, authorize, optionalAuth } = require('../../middleware/auth');
-const { validate }      = require('../../utils/validators');
-const { mediaUpload }   = require('../../middleware/upload');
+const { validate }       = require('../../utils/validators');
+const { mediaUpload }    = require('../../middleware/upload');
 const { uploadLimiter, apiLimiter } = require('../../middleware/rateLimiter');
-const auditLog          = require('../../middleware/auditLog');
+const auditLog           = require('../../middleware/auditLog');
+
+
 
 /**
  * @swagger
  * tags:
  *   - name: Requests
- *     description: Social impact cases — submit, browse, track progress
+ *     description: Social impact cases — submit, browse, verify, assign to NGO
  */
 
 // ── Public ──────────────────────────────────────────────────────
@@ -21,8 +23,8 @@ const auditLog          = require('../../middleware/auditLog');
  * @swagger
  * /requests:
  *   get:
- *     summary: Get all verified public requests (cases)
- *     description: Returns paginated, publicly visible and verified requests. Cached for 5 minutes.
+ *     summary: Get all verified public requests
+ *     description: Returns paginated publicly visible verified requests. Cached 5 minutes.
  *     tags: [Requests]
  *     security: []
  *     parameters:
@@ -31,11 +33,9 @@ const auditLog          = require('../../middleware/auditLog');
  *       - in: query
  *         name: category
  *         schema: { type: string }
- *         description: SDG category slug (e.g. quality_education)
  *       - in: query
  *         name: state
  *         schema: { type: string }
- *         description: Nigerian state name (e.g. Lagos)
  *       - in: query
  *         name: lga
  *         schema: { type: string }
@@ -48,22 +48,18 @@ const auditLog          = require('../../middleware/auditLog');
  *       - in: query
  *         name: min_amount
  *         schema: { type: number }
- *         description: Minimum amount needed (NGN)
  *       - in: query
  *         name: max_amount
  *         schema: { type: number }
- *         description: Maximum amount needed (NGN)
  *       - in: query
  *         name: is_featured
  *         schema: { type: boolean }
  *       - in: query
  *         name: search
  *         schema: { type: string }
- *         description: Full-text search across title and description
  *       - in: query
  *         name: sort
  *         schema: { type: string, default: '-created_at' }
- *         description: "Sort field. Examples: -created_at, -amount_raised, -donor_count, urgency"
  *     responses:
  *       200:
  *         description: Paginated verified requests
@@ -88,17 +84,6 @@ router.get('/', apiLimiter, optionalAuth, ctrl.getVerified);
  *     responses:
  *       200:
  *         description: Featured requests
- *         content:
- *           application/json:
- *             schema:
- *               allOf:
- *                 - $ref: '#/components/schemas/SuccessResponse'
- *                 - type: object
- *                   properties:
- *                     data:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Request'
  */
 router.get('/featured', ctrl.getFeatured);
 
@@ -114,28 +99,23 @@ router.get('/featured', ctrl.getFeatured);
  *         name: q
  *         required: true
  *         schema: { type: string }
- *         description: Search query
  *       - $ref: '#/components/parameters/PageParam'
  *       - $ref: '#/components/parameters/LimitParam'
  *     responses:
  *       200:
- *         description: Search results ranked by relevance
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
+ *         description: Ranked search results
  *       400:
  *         $ref: '#/components/responses/ValidationError'
  */
 router.get('/search', ctrl.search);
 
-// ── Auth-protected (specific paths MUST come before /:id) ────────
+// ── Named paths MUST come before /:id ───────────────────────────
 
 /**
  * @swagger
  * /requests/me:
  *   get:
- *     summary: Get current user's own submitted requests
+ *     summary: Get current user's own requests
  *     tags: [Requests]
  *     security:
  *       - BearerAuth: []
@@ -150,10 +130,6 @@ router.get('/search', ctrl.search);
  *     responses:
  *       200:
  *         description: User's requests
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
@@ -165,12 +141,8 @@ router.get('/me', authenticate, ctrl.getMyRequests);
  *   get:
  *     summary: Admin — get requests pending verification
  *     description: |
- *       Returns requests filtered by verification status for the admin queue.
- *       Accepts comma-separated status values.
- *       Defaults to: submitted, under_review, field_verification, more_info_requested.
- *
- *       **Note:** This route is declared before `GET /requests/{id}` in Express
- *       to prevent "admin" from being matched as a request ID param.
+ *       Returns requests filtered by status for the admin verification queue.
+ *       Comma-separate multiple statuses. Defaults to all pending statuses.
  *     tags: [Requests]
  *     security:
  *       - BearerAuth: []
@@ -178,37 +150,18 @@ router.get('/me', authenticate, ctrl.getMyRequests);
  *       - in: query
  *         name: status
  *         schema: { type: string }
- *         description: Comma-separated statuses to filter by
  *         example: submitted,under_review,field_verification,more_info_requested
  *       - in: query
  *         name: category
  *         schema: { type: string }
- *         description: Filter by SDG category slug
  *       - in: query
  *         name: urgency
  *         schema: { type: string, enum: [low, medium, high, critical] }
- *         description: Filter by urgency level
  *       - $ref: '#/components/parameters/PageParam'
  *       - $ref: '#/components/parameters/LimitParam'
  *     responses:
  *       200:
- *         description: Pending requests for the verification queue
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Request'
- *                 pagination:
- *                   type: object
- *                   properties:
- *                     total: { type: integer }
- *                     page:  { type: integer }
- *                     pages: { type: integer }
- *                     limit: { type: integer }
+ *         description: Pending requests
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  *       403:
@@ -221,7 +174,82 @@ router.get(
   ctrl.getAdminQueue
 );
 
-// ── Dynamic param routes ──────────────────────────────────────────
+/**
+ * @swagger
+ * /requests/assignment/{assignmentId}:
+ *   get:
+ *     summary: NGO — get my assignment with full request details
+ *     description: |
+ *       Returns the full assignment including ALL request data:
+ *       - Full description, impact statement
+ *       - All media (images, videos, documents) uploaded by the requester
+ *       - Beneficiary count, location, urgency, amount needed
+ *       - Requester's name and avatar
+ *       - Verification notes and status
+ *       - Deadline set by admin
+ *
+ *       Only accessible by the NGO the assignment was assigned to.
+ *     tags: [Requests]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: assignmentId
+ *         required: true
+ *         schema: { type: string }
+ *         description: MongoDB ID of the NgoAssignment
+ *     responses:
+ *       200:
+ *         description: Full assignment with complete request data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 _id:          { type: string }
+ *                 type:         { type: string, enum: [field_verification, execution] }
+ *                 status:       { type: string }
+ *                 deadline:     { type: string, format: date-time }
+ *                 instructions: { type: string }
+ *                 assigned_by:  { type: object }
+ *                 request:
+ *                   type: object
+ *                   description: Full request with all media
+ *                   properties:
+ *                     title:             { type: string }
+ *                     description:       { type: string }
+ *                     impact_statement:  { type: string }
+ *                     state:             { type: string }
+ *                     lga:               { type: string }
+ *                     amount_needed:     { type: number }
+ *                     beneficiaries_count:{ type: integer }
+ *                     urgency:           { type: string }
+ *                     media:
+ *                       type: array
+ *                       description: All images, videos, documents from the requester
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           url:         { type: string }
+ *                           public_id:   { type: string }
+ *                           type:        { type: string, enum: [image, video, document] }
+ *                           uploaded_at: { type: string, format: date-time }
+ *                     requester: { type: object }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ */
+router.get(
+  '/assignment/:assignmentId',
+  authenticate,
+  authorize('ngo_partner'),
+  ctrl.getMyAssignment
+);
+
+// ── Dynamic :id routes ───────────────────────────────────────────
 
 /**
  * @swagger
@@ -234,16 +262,7 @@ router.get(
  *       - $ref: '#/components/parameters/IdParam'
  *     responses:
  *       200:
- *         description: Request detail with progress updates and media
- *         content:
- *           application/json:
- *             schema:
- *               allOf:
- *                 - $ref: '#/components/schemas/SuccessResponse'
- *                 - type: object
- *                   properties:
- *                     data:
- *                       $ref: '#/components/schemas/Request'
+ *         description: Request detail with media and progress
  *       404:
  *         $ref: '#/components/responses/NotFound'
  */
@@ -253,14 +272,9 @@ router.get('/:id', optionalAuth, ctrl.getById);
  * @swagger
  * /requests:
  *   post:
- *     summary: Submit a new social impact request
+ *     summary: Submit a new funding request
  *     description: |
- *       Submit a need for funding. The request starts in 'submitted' status and goes through
- *       verification before becoming visible to donors.
- *
- *       **State flow:** draft → submitted → under_review → verified → funded → in_progress → completed
- *
- *       Upload evidence files as multipart/form-data (images, videos, documents — max 50MB per file, up to 10 files).
+ *       State flow: draft → submitted → under_review → verified → funded → in_progress → completed
  *     tags: [Requests]
  *     security:
  *       - BearerAuth: []
@@ -276,16 +290,14 @@ router.get('/:id', optionalAuth, ctrl.getById);
  *                   media:
  *                     type: array
  *                     items: { type: string, format: binary }
- *                     description: Evidence files — images, videos, documents (max 10 files, 50MB each)
+ *                     description: Evidence files (max 10, 50MB each)
  *     responses:
  *       201:
- *         description: Request submitted successfully
+ *         description: Request submitted
  *       400:
  *         $ref: '#/components/responses/ValidationError'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- *       403:
- *         $ref: '#/components/responses/Forbidden'
  *       429:
  *         $ref: '#/components/responses/TooManyRequests'
  */
@@ -302,9 +314,122 @@ router.post(
 
 /**
  * @swagger
+ * /requests/{id}/assign:
+ *   post:
+ *     summary: Admin — assign request to a verified NGO for field verification or execution
+ *     description: |
+ *       Manually assigns a verified NGO to a request with a set deadline.
+ *
+ *       **What happens:**
+ *       - Validates NGO is verified and has the required permission
+ *       - Checks NGO is not over their concurrent case limit
+ *       - Prevents duplicate active assignment of same type
+ *       - Sets request status to `under_review`
+ *       - Busts NGO dashboard cache — they see it **immediately**
+ *       - Sends NGO a push notification with deadline
+ *
+ *       **What the NGO gets access to** (via `GET /requests/assignment/:id`):
+ *       - Full request title, description, impact statement
+ *       - All uploaded media: images, videos, documents from the requester
+ *       - Beneficiary count, location (state + LGA), urgency
+ *       - Amount needed
+ *       - Admin instructions and deadline
+ *     tags: [Requests]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - $ref: '#/components/parameters/IdParam'
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ngo_user_id]
+ *             properties:
+ *               ngo_user_id:
+ *                 type: string
+ *                 description: User._id of the verified NGO to assign
+ *               assignment_type:
+ *                 type: string
+ *                 enum: [field_verification, execution]
+ *                 default: field_verification
+ *                 description: What the NGO should do — verify the claim or execute the project
+ *               instructions:
+ *                 type: string
+ *                 maxLength: 2000
+ *                 description: Specific instructions for the NGO (what to check, what evidence to collect)
+ *               deadline_days:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 30
+ *                 default: 7
+ *                 description: Number of days from today for the NGO's report deadline
+ *     responses:
+ *       201:
+ *         description: Assignment created. NGO notified and can access full request immediately.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 _id:          { type: string }
+ *                 type:         { type: string }
+ *                 status:       { type: string, example: assigned }
+ *                 deadline:     { type: string, format: date-time }
+ *                 instructions: { type: string }
+ *                 ngo:          { type: object }
+ *                 assigned_by:  { type: object }
+ *                 request:      { type: object, description: Full request with media }
+ *       400:
+ *         description: NGO not verified, at capacity, duplicate assignment, or invalid status
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       409:
+ *         description: Active assignment of this type already exists for this request
+ */
+router.post(
+  '/:id/assign',
+  authenticate,
+  authorize('super_admin', 'admin'),
+  auditLog('ASSIGN_NGO', 'Request'),
+  ctrl.assignToNgo
+);
+
+/**
+ * @swagger
+ * /requests/{id}/assignments:
+ *   get:
+ *     summary: Admin — list all NGO assignments for a request
+ *     tags: [Requests]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - $ref: '#/components/parameters/IdParam'
+ *     responses:
+ *       200:
+ *         description: All assignments (past and current) for this request
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ */
+router.get(
+  '/:id/assignments',
+  authenticate,
+  authorize('super_admin', 'admin'),
+  ctrl.getAssignments
+);
+
+/**
+ * @swagger
  * /requests/{id}:
  *   patch:
- *     summary: Update a request (owner only, draft or submitted status only)
+ *     summary: Update a request (owner only, draft or submitted status)
  *     tags: [Requests]
  *     security:
  *       - BearerAuth: []
@@ -325,7 +450,7 @@ router.post(
  *       200:
  *         description: Request updated
  *       400:
- *         description: Cannot update — request is beyond submitted status
+ *         description: Cannot update — already under review or verified
  *       403:
  *         $ref: '#/components/responses/Forbidden'
  *       404:
@@ -343,8 +468,7 @@ router.patch(
  * @swagger
  * /requests/{id}/progress:
  *   post:
- *     summary: Add a progress update to a request (NGO or admin)
- *     description: Upload before/after photos, videos, and descriptions of execution progress.
+ *     summary: Add a progress update (NGO or admin)
  *     tags: [Requests]
  *     security:
  *       - BearerAuth: []
@@ -358,16 +482,12 @@ router.patch(
  *             type: object
  *             required: [title, description]
  *             properties:
- *               title:
- *                 type: string
- *                 example: Week 2 Update
- *               description:
- *                 type: string
- *                 example: Roof materials delivered to site...
+ *               title:       { type: string }
+ *               description: { type: string }
  *               media:
  *                 type: array
  *                 items: { type: string, format: binary }
- *                 description: Progress photos/videos (max 5 files)
+ *                 description: Progress photos/videos (max 5)
  *     responses:
  *       200:
  *         description: Progress update added
@@ -398,9 +518,9 @@ router.post(
  *       - $ref: '#/components/parameters/IdParam'
  *     responses:
  *       200:
- *         description: Request deleted successfully
+ *         description: Deleted successfully
  *       400:
- *         description: Cannot delete — request is in an active or funded state
+ *         description: Cannot delete — active or funded state
  *       403:
  *         $ref: '#/components/responses/Forbidden'
  *       404:
