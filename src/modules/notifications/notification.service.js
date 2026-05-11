@@ -1,6 +1,7 @@
 'use strict';
 
 const nodemailer   = require('nodemailer');
+const sgTransport  = require('nodemailer-sendgrid-transport');
 const axios        = require('axios');
 const { admin }    = require('../../config/firebase');
 const Notification = require('./notification.model');
@@ -8,14 +9,26 @@ const User         = require('../users/user.model');
 const logger       = require('../../utils/logger');
 
 // ── Email Transporter ─────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  host:    process.env.SMTP_HOST,
-  port:    parseInt(process.env.SMTP_PORT) || 587,
-  secure:  false,
-  auth:    { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  pool:    true,
-  maxConnections: 5,
-});
+let transporter;
+
+if (process.env.NODE_ENV === 'production' && process.env.SENDGRID_API_KEY && process.env.SENDGRID_API_KEY.startsWith('SG.') && process.env.SENDGRID_API_KEY.length > 20) {
+  // Use SendGrid in production with valid API key
+  transporter = nodemailer.createTransport(sgTransport({
+    auth: { api_key: process.env.SENDGRID_API_KEY }
+  }));
+  logger.info('📧 Using SendGrid for email delivery');
+} else {
+  // Use SMTP (Gmail) for local development or when SendGrid is not configured
+  transporter = nodemailer.createTransport({
+    host:    process.env.SMTP_HOST,
+    port:    parseInt(process.env.SMTP_PORT) || 587,
+    secure:  false,
+    auth:    { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    pool:    true,
+    maxConnections: 5,
+  });
+  logger.info('📧 Using SMTP for email delivery');
+}
 
 // ── Email HTML Templates ──────────────────────────────────────────
 const getEmailHTML = (template, data) => {
@@ -96,12 +109,16 @@ const getEmailHTML = (template, data) => {
 
 const sendEmail = async ({ to, subject, template, data, html }) => {
   try {
-    await transporter.sendMail({
-      from:    process.env.EMAIL_FROM,
+    const mailOptions = {
       to,
       subject,
-      html:    html || getEmailHTML(template, data),
-    });
+      html: html || getEmailHTML(template, data),
+    };
+
+    // Set 'from' field - required for both SMTP and SendGrid
+    mailOptions.from = process.env.EMAIL_FROM;
+
+    await transporter.sendMail(mailOptions);
     logger.info(`📧 Email sent → ${to}`);
     return true;
   } catch (err) {
