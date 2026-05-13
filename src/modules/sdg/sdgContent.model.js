@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 /**
  * SDGContent — dynamic CMS model.
  * Admins can continuously add educational content per SDG.
- * Content can be text, video, audio, PDF, infographic or quiz.
+ * Content can be text, video, audio, PDF, infographic or ssh-keygen -t ed25519 -C "your-email@example.com".
  * Supports multiple languages (en, ha, yo, ig).
  * target_audience allows filtering content by viewer type.
  */

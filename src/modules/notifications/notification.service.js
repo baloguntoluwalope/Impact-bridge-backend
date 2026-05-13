@@ -12,7 +12,8 @@ const logger       = require('../../utils/logger');
 let transporter;
 
 const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase();
-const MAIL_FROM = process.env.SENDGRID_FROM || process.env.BREVO_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER;
+const BREVO_FROM = process.env.BREVO_FROM || process.env.BREVO_FROM_EMAIL;
+const MAIL_FROM = process.env.SENDGRID_FROM || BREVO_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER;
 const SENDGRID_ENABLED = process.env.SENDGRID_API_KEY && process.env.SENDGRID_API_KEY.startsWith('SG.') && process.env.SENDGRID_API_KEY.length > 20;
 const BREVO_SMTP_HOST = process.env.BREVO_SMTP_HOST || 'smtp-relay.sendinblue.com';
 const BREVO_SMTP_PORT = parseInt(process.env.BREVO_SMTP_PORT || '587', 10);
