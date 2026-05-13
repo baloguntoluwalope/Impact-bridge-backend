@@ -11,24 +11,38 @@ const logger       = require('../../utils/logger');
 // ── Email Transporter ─────────────────────────────────────────────
 let transporter;
 
-if (process.env.NODE_ENV === 'production' && process.env.SENDGRID_API_KEY && process.env.SENDGRID_API_KEY.startsWith('SG.') && process.env.SENDGRID_API_KEY.length > 20) {
-  // Use SendGrid in production with valid API key
+const hasValidSendGridKey = process.env.SENDGRID_API_KEY && process.env.SENDGRID_API_KEY.startsWith('SG.') && process.env.SENDGRID_API_KEY.length > 20;
+const defaultFrom = process.env.SENDGRID_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER;
+const usingSendGrid = hasValidSendGridKey;
+
+if (usingSendGrid) {
   transporter = nodemailer.createTransport(sgTransport({
     auth: { api_key: process.env.SENDGRID_API_KEY }
   }));
-  logger.info('📧 Using SendGrid for email delivery');
+  logger.info(`📧 Using SendGrid for email delivery (from ${defaultFrom})`);
+  if (!process.env.SENDGRID_FROM && defaultFrom?.toLowerCase().includes('@gmail.com')) {
+    logger.warn('📧 SendGrid is enabled but your from address is a Gmail address. Verify this sender identity in SendGrid or set SENDGRID_FROM to a verified address.');
+  }
 } else {
-  // Use SMTP (Gmail) for local development or when SendGrid is not configured
   transporter = nodemailer.createTransport({
     host:    process.env.SMTP_HOST,
-    port:    parseInt(process.env.SMTP_PORT) || 587,
+    port:    parseInt(process.env.SMTP_PORT, 10) || 587,
     secure:  false,
+    requireTLS: true,
     auth:    { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     pool:    true,
     maxConnections: 5,
   });
-  logger.info('📧 Using SMTP for email delivery');
+  logger.info(`📧 Using SMTP for email delivery (from ${defaultFrom})`);
 }
+
+transporter.verify((error, success) => {
+  if (error) {
+    logger.error('📧 Email transporter verification failed:', error);
+  } else {
+    logger.info('📧 Email transporter is ready to send messages');
+  }
+});
 
 // ── Email HTML Templates ──────────────────────────────────────────
 const getEmailHTML = (template, data) => {
@@ -107,22 +121,43 @@ const getEmailHTML = (template, data) => {
 
 // ── Send Functions ────────────────────────────────────────────────
 
+const createSmtpTransport = () => nodemailer.createTransport({
+  host:    process.env.SMTP_HOST,
+  port:    parseInt(process.env.SMTP_PORT, 10) || 587,
+  secure:  false,
+  requireTLS: true,
+  auth:    { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  pool:    true,
+  maxConnections: 5,
+});
+
 const sendEmail = async ({ to, subject, template, data, html }) => {
+  const mailOptions = {
+    to,
+    subject,
+    html: html || getEmailHTML(template, data),
+    from: process.env.SENDGRID_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER,
+  };
+
   try {
-    const mailOptions = {
-      to,
-      subject,
-      html: html || getEmailHTML(template, data),
-    };
-
-    // Set 'from' field - required for both SMTP and SendGrid
-    mailOptions.from = process.env.EMAIL_FROM;
-
     await transporter.sendMail(mailOptions);
     logger.info(`📧 Email sent → ${to}`);
     return true;
   } catch (err) {
     logger.error(`📧 Email failed → ${to}: ${err.message}`);
+
+    if (usingSendGrid && err.message?.includes('verified Sender Identity') && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+      logger.warn('📧 SendGrid sender identity rejected. Retrying via SMTP fallback.');
+      try {
+        const smtpTransport = createSmtpTransport();
+        await smtpTransport.sendMail(mailOptions);
+        logger.info(`📧 Email sent via SMTP fallback → ${to}`);
+        return true;
+      } catch (fallbackErr) {
+        logger.error(`📧 SMTP fallback failed → ${to}: ${fallbackErr.message}`);
+      }
+    }
+
     return false;
   }
 };
