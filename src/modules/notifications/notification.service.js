@@ -11,20 +11,49 @@ const logger       = require('../../utils/logger');
 // ── Email Transporter ─────────────────────────────────────────────
 let transporter;
 
-const hasValidSendGridKey = process.env.SENDGRID_API_KEY && process.env.SENDGRID_API_KEY.startsWith('SG.') && process.env.SENDGRID_API_KEY.length > 20;
-const defaultFrom = process.env.SENDGRID_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER;
-const usingSendGrid = hasValidSendGridKey;
+const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase();
+const MAIL_FROM = process.env.SENDGRID_FROM || process.env.BREVO_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER;
+const SENDGRID_ENABLED = process.env.SENDGRID_API_KEY && process.env.SENDGRID_API_KEY.startsWith('SG.') && process.env.SENDGRID_API_KEY.length > 20;
+const BREVO_SMTP_HOST = process.env.BREVO_SMTP_HOST || 'smtp-relay.sendinblue.com';
+const BREVO_SMTP_PORT = parseInt(process.env.BREVO_SMTP_PORT || '587', 10);
+const BREVO_SMTP_USER = process.env.BREVO_SMTP_USER;
+const BREVO_SMTP_PASS = process.env.BREVO_SMTP_PASS;
 
-if (usingSendGrid) {
-  transporter = nodemailer.createTransport(sgTransport({
-    auth: { api_key: process.env.SENDGRID_API_KEY }
-  }));
-  logger.info(`📧 Using SendGrid for email delivery (from ${defaultFrom})`);
-  if (!process.env.SENDGRID_FROM && defaultFrom?.toLowerCase().includes('@gmail.com')) {
-    logger.warn('📧 SendGrid is enabled but your from address is a Gmail address. Verify this sender identity in SendGrid or set SENDGRID_FROM to a verified address.');
+const createSmtpTransport = (options) => nodemailer.createTransport(options);
+
+const createBrevoTransport = () => createSmtpTransport({
+  host: BREVO_SMTP_HOST,
+  port: BREVO_SMTP_PORT,
+  secure: BREVO_SMTP_PORT === 465,
+  requireTLS: true,
+  auth: { user: BREVO_SMTP_USER, pass: BREVO_SMTP_PASS },
+  pool: true,
+  maxConnections: 5,
+});
+
+if (EMAIL_PROVIDER === 'brevo') {
+  if (!BREVO_SMTP_USER || !BREVO_SMTP_PASS) {
+    logger.error('📧 BREVO email provider selected but BREVO_SMTP_USER/BREVO_SMTP_PASS are missing. Falling back to SMTP.');
+  } else {
+    transporter = createBrevoTransport();
+    logger.info(`📧 Using Brevo SMTP for email delivery (from ${MAIL_FROM})`);
   }
-} else {
-  transporter = nodemailer.createTransport({
+}
+
+if (!transporter) {
+  if (EMAIL_PROVIDER === 'sendgrid' && SENDGRID_ENABLED) {
+    transporter = nodemailer.createTransport(sgTransport({
+      auth: { api_key: process.env.SENDGRID_API_KEY }
+    }));
+    logger.info(`📧 Using SendGrid for email delivery (from ${MAIL_FROM})`);
+    if (!process.env.SENDGRID_FROM && MAIL_FROM?.toLowerCase().includes('@gmail.com')) {
+      logger.warn('📧 SendGrid is enabled but your from address is a Gmail address. Verify this sender identity in SendGrid or set SENDGRID_FROM to a verified address.');
+    }
+  }
+}
+
+if (!transporter) {
+  transporter = createSmtpTransport({
     host:    process.env.SMTP_HOST,
     port:    parseInt(process.env.SMTP_PORT, 10) || 587,
     secure:  false,
@@ -33,7 +62,7 @@ if (usingSendGrid) {
     pool:    true,
     maxConnections: 5,
   });
-  logger.info(`📧 Using SMTP for email delivery (from ${defaultFrom})`);
+  logger.info(`📧 Using SMTP for email delivery (from ${MAIL_FROM})`);
 }
 
 transporter.verify((error, success) => {
@@ -121,22 +150,12 @@ const getEmailHTML = (template, data) => {
 
 // ── Send Functions ────────────────────────────────────────────────
 
-const createSmtpTransport = () => nodemailer.createTransport({
-  host:    process.env.SMTP_HOST,
-  port:    parseInt(process.env.SMTP_PORT, 10) || 587,
-  secure:  false,
-  requireTLS: true,
-  auth:    { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  pool:    true,
-  maxConnections: 5,
-});
-
 const sendEmail = async ({ to, subject, template, data, html }) => {
   const mailOptions = {
     to,
     subject,
     html: html || getEmailHTML(template, data),
-    from: process.env.SENDGRID_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: MAIL_FROM,
   };
 
   try {
@@ -146,10 +165,18 @@ const sendEmail = async ({ to, subject, template, data, html }) => {
   } catch (err) {
     logger.error(`📧 Email failed → ${to}: ${err.message}`);
 
-    if (usingSendGrid && err.message?.includes('verified Sender Identity') && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    if (EMAIL_PROVIDER === 'sendgrid' && SENDGRID_ENABLED && err.message?.includes('verified Sender Identity') && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
       logger.warn('📧 SendGrid sender identity rejected. Retrying via SMTP fallback.');
       try {
-        const smtpTransport = createSmtpTransport();
+        const smtpTransport = createSmtpTransport({
+          host:    process.env.SMTP_HOST,
+          port:    parseInt(process.env.SMTP_PORT, 10) || 587,
+          secure:  false,
+          requireTLS: true,
+          auth:    { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+          pool:    true,
+          maxConnections: 5,
+        });
         await smtpTransport.sendMail(mailOptions);
         logger.info(`📧 Email sent via SMTP fallback → ${to}`);
         return true;
