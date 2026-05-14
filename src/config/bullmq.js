@@ -4,15 +4,25 @@ const { Queue, FlowProducer } = require('bullmq');
 const IORedis = require('ioredis');
 const logger = require('../utils/logger');
 
+const redisUrl = process.env.REDIS_URL || `redis://${process.env.REDIS_HOST || '127.0.0.1'}:${process.env.REDIS_PORT || 6379}`;
+const redisOptions = {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+};
+
+if (redisUrl.startsWith('rediss://')) {
+  redisOptions.tls = { rejectUnauthorized: false };
+}
+
 /**
  * 🔌 REDIS CONNECTION
  * BullMQ requires maxRetriesPerRequest: null
  */
-const connection = new IORedis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-  // If using Render/Managed Redis, 'rediss://' in the URL handles TLS
-});
+const connection = new IORedis(redisUrl, redisOptions);
+connection.on('connect', () => logger.info(`✅ BullMQ connected to Redis via ${redisUrl.startsWith('rediss://') ? 'TLS' : 'TCP'}`));
+connection.on('error', (err) => logger.error(`BullMQ Redis error: ${err.message}`));
+connection.on('close', () => logger.warn('BullMQ Redis connection closed'));
+connection.on('reconnecting', () => logger.warn('BullMQ Redis reconnecting...'));
 
 const defaultJobOptions = {
   attempts: 3,
@@ -68,6 +78,7 @@ const sendToDeadLetter = async (originalQueue, data, reason) => {
 };
 
 const flowProducer = new FlowProducer({ connection });
+flowProducer.on('error', (err) => logger.error(`FlowProducer error: ${err.message}`));
 
 module.exports = {
   queues,
