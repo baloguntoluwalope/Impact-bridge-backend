@@ -13,7 +13,7 @@
  *   npm uninstall nodemailer nodemailer-sendgrid-transport   ← no longer needed
  */
 
-const { TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
+const { BrevoClient } = require('@getbrevo/brevo');
 const axios        = require('axios');
 const { admin }    = require('../../config/firebase');
 const Notification = require('./notification.model');
@@ -32,8 +32,7 @@ if (!MAIL_FROM_EMAIL) {
   logger.error('📧 BREVO_FROM_EMAIL is not set. Email delivery will fail.');
 }
 
-const brevoEmailApi = new TransactionalEmailsApi();
-brevoEmailApi.setApiKey(TransactionalEmailsApi.ApiKeyAuth, BREVO_API_KEY);
+const brevoClient = new BrevoClient({ apiKey: BREVO_API_KEY });
 
 logger.info(`📧 Email provider: Brevo HTTP API (from: ${MAIL_FROM_NAME} <${MAIL_FROM_EMAIL}>)`);
 
@@ -168,17 +167,15 @@ const getEmailHTML = (template, data) => {
  */
 const sendEmail = async ({ to, subject, template, data, html }) => {
   try {
-    const message = new SendSmtpEmail();
-    message.sender      = { name: MAIL_FROM_NAME, email: MAIL_FROM_EMAIL };
-    message.to          = [{ email: to }];
-    message.subject     = subject;
-    message.htmlContent = html || getEmailHTML(template, data);
-
-    await brevoEmailApi.sendTransacEmail(message);
+    await brevoClient.emails.send({
+      sender: { name: MAIL_FROM_NAME, email: MAIL_FROM_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html || getEmailHTML(template, data),
+    });
     logger.info(`📧 Email sent → ${to} [${template || 'custom'}]`);
     return true;
   } catch (err) {
-    // Brevo SDK wraps HTTP errors; err.response?.body has Brevo's error detail
     const detail = err.response?.body?.message || err.message;
     logger.error(`📧 Email failed → ${to}: ${detail}`);
     return false;
