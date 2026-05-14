@@ -13,7 +13,7 @@
  *   npm uninstall nodemailer nodemailer-sendgrid-transport   ← no longer needed
  */
 
-const Brevo        = require('@getbrevo/brevo');
+const { TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
 const axios        = require('axios');
 const { admin }    = require('../../config/firebase');
 const Notification = require('./notification.model');
@@ -32,8 +32,8 @@ if (!MAIL_FROM_EMAIL) {
   logger.error('📧 BREVO_FROM_EMAIL is not set. Email delivery will fail.');
 }
 
-const brevoEmailApi = new Brevo.TransactionalEmailsApi();
-brevoEmailApi.authentications.apiKey.apiKey = BREVO_API_KEY;
+const brevoEmailApi = new TransactionalEmailsApi();
+brevoEmailApi.setApiKey(TransactionalEmailsApi.ApiKeyAuth, BREVO_API_KEY);
 
 logger.info(`📧 Email provider: Brevo HTTP API (from: ${MAIL_FROM_NAME} <${MAIL_FROM_EMAIL}>)`);
 
@@ -168,7 +168,7 @@ const getEmailHTML = (template, data) => {
  */
 const sendEmail = async ({ to, subject, template, data, html }) => {
   try {
-    const message = new Brevo.SendSmtpEmail();
+    const message = new SendSmtpEmail();
     message.sender      = { name: MAIL_FROM_NAME, email: MAIL_FROM_EMAIL };
     message.to          = [{ email: to }];
     message.subject     = subject;
