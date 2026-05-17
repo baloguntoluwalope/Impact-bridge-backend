@@ -13,26 +13,31 @@
  *   npm uninstall nodemailer nodemailer-sendgrid-transport   ← no longer needed
  */
 
-const { BrevoClient } = require('@getbrevo/brevo');
 const axios        = require('axios');
 const { admin }    = require('../../config/firebase');
 const Notification = require('./notification.model');
 const User         = require('../users/user.model');
 const logger       = require('../../utils/logger');
 
-// ── Brevo HTTP client (initialised once at module load) ───────────
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
+// ── Brevo HTTP client ─────────────────────────────────────────────
+// Uses axios directly against Brevo REST API v3 — no SDK dependency,
+// works with any @getbrevo/brevo version and never breaks on SDK updates.
+const BREVO_API_KEY   = process.env.BREVO_API_KEY;
 const MAIL_FROM_EMAIL = process.env.BREVO_FROM_EMAIL || process.env.EMAIL_FROM;
 const MAIL_FROM_NAME  = process.env.BREVO_FROM_NAME  || 'Impact Bridge';
 
-if (!BREVO_API_KEY) {
-  logger.error('📧 BREVO_API_KEY is not set. Email delivery will fail.');
-}
-if (!MAIL_FROM_EMAIL) {
-  logger.error('📧 BREVO_FROM_EMAIL is not set. Email delivery will fail.');
-}
+if (!BREVO_API_KEY)   logger.error('📧 BREVO_API_KEY is not set. Email delivery will fail.');
+if (!MAIL_FROM_EMAIL) logger.error('📧 BREVO_FROM_EMAIL is not set. Email delivery will fail.');
 
-const brevoClient = new BrevoClient({ apiKey: BREVO_API_KEY });
+const brevoAxios = axios.create({
+  baseURL: 'https://api.brevo.com/v3',
+  timeout: 30_000,  // increased — Brevo can be slow from some networks
+  headers: {
+    'api-key':      BREVO_API_KEY,
+    'Content-Type': 'application/json',
+    'Accept':       'application/json',
+  },
+});
 
 logger.info(`📧 Email provider: Brevo HTTP API (from: ${MAIL_FROM_NAME} <${MAIL_FROM_EMAIL}>)`);
 
@@ -166,20 +171,39 @@ const getEmailHTML = (template, data) => {
  * @returns {Promise<boolean>}
  */
 const sendEmail = async ({ to, subject, template, data, html }) => {
-  try {
-    await brevoClient.emails.send({
-      sender: { name: MAIL_FROM_NAME, email: MAIL_FROM_EMAIL },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html || getEmailHTML(template, data),
-    });
-    logger.info(`📧 Email sent → ${to} [${template || 'custom'}]`);
-    return true;
-  } catch (err) {
-    const detail = err.response?.body?.message || err.message;
-    logger.error(`📧 Email failed → ${to}: ${detail}`);
-    return false;
+  const payload = {
+    sender:      { name: MAIL_FROM_NAME, email: MAIL_FROM_EMAIL },
+    to:          [{ email: to }],
+    subject,
+    htmlContent: html || getEmailHTML(template, data),
+  };
+
+  // Retry up to 3 times with exponential backoff before giving up.
+  // BullMQ also retries the whole job, but having inner retries here
+  // avoids burning through job attempts on transient network blips.
+  const MAX_TRIES = 3;
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    try {
+      await brevoAxios.post('/smtp/email', payload);
+      logger.info(`📧 Email sent → ${to} [${template || 'custom'}]`);
+      return true;
+    } catch (err) {
+      const detail  = err.response?.data?.message || err.message;
+      const isLast  = attempt === MAX_TRIES;
+      const isRetry = err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT'
+                   || err.code === 'ECONNRESET'   || err.response?.status >= 500;
+
+      if (isLast || !isRetry) {
+        logger.error(`📧 Email failed → ${to} (attempt ${attempt}): ${detail}`);
+        return false;
+      }
+
+      const delay = attempt * 2_000; // 2s, 4s
+      logger.warn(`📧 Email attempt ${attempt} failed (${detail}), retrying in ${delay}ms…`);
+      await new Promise(r => setTimeout(r, delay));
+    }
   }
+  return false;
 };
 
 /**
@@ -381,7 +405,6 @@ module.exports = {
   markAllRead,
   broadcast,
 };
-
 
 // 'use strict';
 

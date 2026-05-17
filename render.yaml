@@ -1,0 +1,23 @@
+# Render.yaml configuration for Impact Bridge
+# This file helps deploy both API and Worker to Render
+
+services:
+  - type: web
+    name: impact-bridge-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+
+  - type: background_worker
+    name: impact-bridge-worker
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm run worker
+    envVars:
+      - key: NODE_ENV
+        value: production

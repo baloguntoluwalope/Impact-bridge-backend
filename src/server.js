@@ -26,7 +26,6 @@ const start = async () => {
     // 1. DATABASE CONNECTIONS
     await connectDB();
     log.success('MongoDB connected');
-
     await connectRedis();
     log.success('Redis connected');
 

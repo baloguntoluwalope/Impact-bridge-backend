@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "worker": "node src/jobs/worker.js",
     "test": "jest --coverage --forceExit --detectOpenHandles",
-    "seed:admin": "node src/scripts/seedAdmin.js"
+    "seed:admin": "node src/scripts/seedAdmin.js",
+    "seed:sdg": "node src/sdg/Sdgcontent.seed.js"
   },
   "engines": {
     "node": "18.x"
@@ -18,7 +19,6 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@getbrevo/brevo": "^5.0.4",
     "axios": "^1.15.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.73.5",
