@@ -1,6 +1,6 @@
 'use strict';
 
-require('dotenv').config();
+// require('dotenv').config();
 
 const { Worker }                      = require('bullmq');
 const { createWorkerConnection, sendToDeadLetter, shutdown: shutdownQueues } = require('../config/bullmq');

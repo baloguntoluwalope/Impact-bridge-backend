@@ -28,6 +28,10 @@ const start = async () => {
     log.success('MongoDB connected');
     await connectRedis();
     log.success('Redis connected');
+  // Start BullMQ workers in the same process (shares all env vars)
+if (process.env.NODE_ENV !== 'test') {
+  require('./jobs/worker');
+}
 
     // 2. FIREBASE
     try {
